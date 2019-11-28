@@ -1,0 +1,206 @@
+---
+author: "Nick Reeves and Peter Keel"
+title: "An Analysis on Mining Explosions in Great Britain"
+output: pdf_document
+fontsize: 11pt
+header-includes:
+    - \usepackage{setspace}\doublespacing
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(rjags)
+library(ggplot2)
+library(gridExtra)
+library(coda)
+library(knitr)
+```
+
+```{r,echo=F}
+coal <- read.csv("https://aloy.rbind.io/data/coal.csv")
+coal$index <- coal$year - 1850
+```
+
+#Introduction
+Since the beginning of the industrial revolution, the process of coal-mining has been at the forefront of the energy industry in Great Britain. Although much has been invested into this process, there have always been many risks associated with the practice. Over the last 100 years, explosions have accounted for the deaths of hundreds of coal-miners. However, nearing the end of the nineteenth century, researchers began to see a decrease in such disasters. In this study we will use a Bayesian sampling approach to predict marginal posterior distributions for $\tau$, the year of the shift to fewer mining disasters in Great Britain, as well as the expected rate of mining disasters per year before the shift, $\theta$, and after the shift, $\lambda$. We will also be calculating and analyzing the ratio between $\theta$ and $\lambda$ which is denoted R. 
+
+#Data
+Our data set ranges from the year 1851 to 1962. Each year has the corresponding number of coal-mining accidents that happened that year. Below in Figure 1 is a histogram plotting of the number of incidents. As can be seen, the data was very right-skewed with a mean of about 1.7. Also in Figure 1, a scatterplot of number of accidents against the year they happened is shown. It can be observed that around 1900, the rate of disasters decreased. It is also important to note that the maximum rate of disasters per year observed was 6 and the minimum rate observed was 0 over the 112 year time period.
+
+```{r, echo=F, fig.height = 2.5, fig.width = 8, fig.cap="Distribution and Number of Accidents over Time"}
+one <- ggplot() + aes(coal$count) + geom_histogram(binwidth = 1, fill="coral") + theme_minimal() + xlab("Number of Incidents")
+
+two <- ggplot() + aes(coal$index, coal$count) + geom_point(color="coral") + theme_minimal() + xlab("Years past 1850") + ylab("Number of Incidents")
+
+grid.arrange(one,two, nrow=1)
+```
+
+#Model
+The model we chose in order to estimate $\tau$, $\beta_0$, and $\beta_1$ was a multiparameter Bayesian model with a Poisson likelihood and a multivariate prior.
+
+We were given the likelihood $Y_i$ ~ $Poisson(\mu_i)$ with $log(\mu_i)$ = $\beta_0 + \beta_1*\delta(i - \tau)$ where $\mu_i$ represented the rate of mining disasters on a yearly basis. In addition, it is important to notice that delta is a stepwise function. This means that if i - $\tau$ is positive, then $\delta$ is 1 and if i - $\tau$ is negative, then $\delta$ is 0. This function helps distinguish between the rates $\theta$ and $\lambda$, the yearly rate of incidents that occur before and after the turning point. From the equation above, it was evident that the parameters that we needed to develop priors for were $\tau, \beta_0$, & $\beta_1$.
+
+First we set our prior for $\tau$, the year that mining disaster rates decreased. We were given the fact that researchers saw rates decrease toward the end of the nineteenth century so we chose a uniform prior for $\tau$ of Uniform(10, 70) implying that we expected the turning point to fall within the years 1860 to 1920.
+
+Next, we chose the priors for $\beta_0$ and $\beta_1$. Given we had close to no prior knowledge about the history of mining explosions, we chose to set the priors for $\beta_0$ and $\beta_1$ to be normal uninformative priors centered around zero. We chose a standard deviation of 10 because we expected that $e^{\beta_0}$ and $e^{\beta_0 + \beta_1}$ would very likely fall between 0 and 10 incidents per year. Had we used any higher of a standard deviation it would have made more sense to just use a uniform prior. We considered adjusting the center of these prior distributions, but we determined that it would have very little affect on our posterior analysis given that these prior distributions were close to flat on the range (-10, 10). These priors were as follows: $\beta_0$ ~ Normal(0,$10^2$), and $\beta_1$ ~ Normal(0,$10^2$). The respective distributions can be seen in Figure 2. 
+
+```{r, warning=F, echo=F, fig.width = 8, fig.height = 4, fig.align="center", fig.cap= "Marginal Priors"}
+x = seq(10, 70, 1)
+y = dunif(x, 10, 70)
+density = data.frame(x=x, y=y)
+
+p1 <- ggplot(density, aes(x, y)) + 
+        geom_area(fill="dodgerblue") + 
+        theme_minimal()+
+        xlab(expression(tau)) +
+        ylab("Marginal Prior") + 
+        xlim(30, 70) + ylim(0,.025)
+
+
+w = seq(-100, 100, .1)
+z = dnorm(w, 0, 10)
+density2 = data.frame(x=w, y=z)
+
+p2 <- ggplot(density2, aes(w, z)) + 
+        geom_area(fill="dodgerblue") + 
+        theme_minimal()+
+        xlab(expression(beta[0])) +
+        ylab("Marginal Prior") + 
+        xlim(-5,5) + ylim(0, .05)
+
+w = seq(-100, 100, .1)
+z = dnorm(w, 0, 10)
+density3 = data.frame(x=w, y=z)
+
+p3 <- ggplot(density3, aes(w, z)) + 
+        geom_area(fill="dodgerblue") + 
+        theme_minimal()+
+        xlab(expression(beta[1])) +
+        ylab("Marginal Prior") + 
+        xlim(-5,5) + ylim(0, .05)
+
+lay <- rbind(c(1,2,3))
+
+grid.arrange(p1,p2,p3, layout_matrix = lay)
+```
+
+Given our likelihood and priors, and following from the Bayesian paradigm, our full posterior distribution was proportional to the following:
+
+\begin{center}
+
+$P(\tau,\beta_0,\beta_1|Y_1...Y_{112})$ $\propto$ $\pi(\tau)*\pi(\beta_0)*\pi(\beta_1)*\prod_{n=1}^{112}f(Y_i|\tau,\beta_0,\beta_1)$
+
+\end{center}
+
+#Computation
+To compute the marginal posteriors for $\tau$, $\beta_0$, & $\beta_1$ we decided to use the metropolis sampling algorithm implemented with the rjags library. At a high level, this algorithm uses distributions, known as candidate distributions, to pick random values of the parameters at hand. These random draws are then plugged into their respective marginal posterior functions and are compared to the previous draw plugged into the same marginal posterior function. These comparisons are then used to help determine whether or not the candidate draw is accepted. Over time, as the draws are continuously accepted or denied, the values converge and form the marginal posterior for the specific parameter. In our specific model, we used a burn in period of 1000 draws, 10000 MCMC samples, and we set our initial candidate values to $\tau$ = 30, $\beta_0$ = 0, and $\beta_1$ = 0. 
+
+```{r eval=T, echo = F, include = F}
+# Data management
+Y <- coal$count
+n <- length(coal$year)
+
+# Specify the model
+model_string <- textConnection("model{
+  # Specify the likelihood
+  for (i in 1:n) {
+    mu[i] = exp(B0 + B1*step(i - Tau))
+    Y[i] ~ dpois(mu[i])
+
+  }
+
+  # Specify the priors
+  Tau ~ dunif(10,70)
+  B0 ~ dnorm(0,1/100)
+  B1 ~ dnorm(0,1/100)
+  
+
+  # Calculate theta, lambda, and R
+  theta = exp(B0)
+  lambda = exp(B0 + B1)
+  R = theta/lambda
+}")
+
+# Compile the MCMC code
+inits <- list(Tau = 30, B0 = 0, B1 = 0)
+data  <- list(Y = Y, n = n)
+model <- jags.model(model_string, data = data, inits = inits, n.chains = 3, quiet = T)
+
+
+# Draw 1000 burn-in samples 
+update(model, 1000, progress.bar = "none")
+
+# Draw 10000 posterior samples
+
+samples2 <- coda.samples(model, 
+  variable.names = c("Tau", "theta", "lambda", "R"), 
+  n.iter = 10000, 
+  progress.bar = "none")
+
+```
+
+```{r, echo = F, include=F}
+samples1 <- coda.samples(model, 
+  variable.names = c("Tau", "theta", "lambda", "R", "B0", "B1"), 
+  n.iter = 10000, 
+  progress.bar = "none")
+
+summary(samples1)
+plot(samples1)
+```
+
+```{r, echo = F, include = F}
+# Inspect/summarize the results
+x <- summary(samples2)
+#slightly different than what's in report because couldn't figure out how to set a seed with rjags
+kable(x$quantiles)
+```
+
+```{r,, fig.width=14, fig.height = 10, message=F, echo=F,fig.cap= "Traceplots and Parameters"}
+plot(samples2, col = c("black", "coral", "dodgerblue"))
+```
+
+#Results
+Looking at our traceplots in Figure 3, we appear to have a good level of convergence for the metropolis marginal posterior sampling. We also looked at the Geweke test for convergence as well as the Gelman test and found that their results also suggested that our distributions had converged. The Gelman test yielded values that were all equal to 1 and the Geweke test returned values that all had magnitude less than 2.
+
+We ended up finding that the distribution of $\tau$ appeared fairly normal in nature with a slight leap in probability around a value of 37. We attributed this leap to a combination of weak priors and the distribution of our data. To account for this multimodal distribution, we used an HDI 95% credible interval. We found that with 95% probability $\tau$, the turning point year, would fall within the range (36.00, 46.03). What this meant was that the turning point year for a decrease in mining incidents was very likely between 1886 and 1896. In addition, the mean and median for $\tau$ were 40.50 and 40.66 respectively.
+
+$\theta$ and $\lambda$ were both calculated using the marginal posteriors for $\beta_0$ and $\beta_1$. We ended up finding that both parameters were symmetrical and Gaussian in nature. We used an equal-tailed credible interval to approximate both parameters and found that with 95% probability we could expect to see $\theta$ within the range (2.57, 3.73) and $\lambda$ within the range (0.70, 1.16). This meant that before the turning point, the rate of mining incidents was over three times as high as the rate for mining incidents after $\tau$, the turning point year.
+
+Last, we found the distribution for R using the distributions for $\theta$ and $\lambda$. As noted above, this was the ratio between $\theta$ and $\lambda$ (i.e. $\theta$ / $\lambda$). With 95% probability we found that R was in the range (2.52, 4.62). This implied that before the turning point year, the expected number of disasters before $\tau$ was between 2.52 and 4.62 times larger than the expected number of disasters after $\tau$. 
+
+Overall, our Bayesian analyses showed that mining incidents did indeed decrease in Great Britain around the end of the 19th century by about a mean factor of 3.43 (rate was 3.43 times smaller). If further analyses were to be conducted, we would like to elicit more prior information from experts in the field in order to acquire a more accurate result. We would also consider looking at the possible causes for this noticeable decrease in the rate for coal mining explosions. In addition, it might be interesting to see if a Bayesian analysis on coal mining disaster rates outside of Great Britain yield the same results. 
+
+
+```{r, echo = F, include = F}
+geweke.diag(samples2[[1]])
+gelman.diag(samples2)
+
+thdi <- HDInterval::hdi(samples2[[1]][,2])
+tmean <- mean(samples2[[1]][,2])
+tmed <- median(samples2[[1]][,2])
+thdi
+tmean
+tmed
+
+thetaq <- quantile(samples2[[1]][,4], probs = c(.025, .975))
+thetaq
+lambdaq <- quantile(samples2[[1]][,3], probs = c(.025, .975))
+lambdaq
+Rq <- quantile(samples2[[1]][,1], probs = c(.025, .975))
+Rq
+Rmean <- mean(samples2[[1]][,1])
+Rmean
+```
+
+
+
+
+
+
+
+
+
+
+
+
